@@ -15,6 +15,8 @@ def collate(batch):
 
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.BATCH_SIZE, shuffle=True, collate_fn=collate)
 
+
+
 def imshow(img):
     img = np.transpose(img, (1, 2, 0))
     plt.imshow(img)
@@ -43,6 +45,8 @@ for class_idx, (class_label, img_list) in enumerate(class_images.items()):
 plt.show()
 
 
+
+
 NUM_IMAGES = 4
 CIFAR_images = torch.stack([test_dset[idx][0] for idx in range(NUM_IMAGES)], dim=0)
 img_grid = torchvision.utils.make_grid(CIFAR_images, nrow=4, normalize=True, pad_value=0.9)
@@ -56,6 +60,8 @@ plt.imshow(img_grid)
 plt.axis("off")
 plt.show()
 plt.close()
+
+
 
 
 def img_to_patch(x, patch_size, flatten_channels=True):
@@ -91,6 +97,8 @@ for i in range(CIFAR_images.shape[0]):
 plt.show()
 plt.close()
 
+
+
 lrs = []
 for epoch in range(200):
     lr_scheduler.step(epoch)
@@ -103,6 +111,8 @@ plt.xlabel('Epoch')
 plt.ylabel('Learning Rate')
 plt.grid(True)
 plt.show()
+
+
 
 def plot_cutmix_images(model, data_loader, device):
 
