@@ -18,7 +18,7 @@ This project is a implementation from scratch of a slightly modified version of 
 
 The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762)
 
-<img src="./images/vit.gif" width="500px"></img>
+<img src="./Images/vit.gif" width="500px"></img>
 
 We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projeciton. This allows us to capture more of the spatial context of the images. Our self-attention module is given by the following:
 
