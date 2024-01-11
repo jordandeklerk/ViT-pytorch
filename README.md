@@ -1,6 +1,5 @@
 # Training Vision Transformer on CIFAR-10
 
-#
 <hr>
 
 ## Contents
