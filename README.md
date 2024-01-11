@@ -18,11 +18,9 @@ This project is a implementation from scratch of a slightly modified version of 
 
 Vision Transformers often suffer when trained from scratch on small datasets such as `CIFAR-10`. This is primarily due to the lack of locality, inductive biases and hierarchical structure of the representations which is commonly observed in the Convolutional Neural Networks. As a result, ViTs require large-scale pre-training to learn such properties from the data for better transfer learning to downstream tasks. This project shows that with modifications, supervised training of vision transformer models on small scale datasets like `CIFAR-10` can lead to very high accuracy with low computational constraints. 
 
-The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762)
-
 <img src="./Images/vit.gif" width="500px"></img>
 
-We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projeciton. This allows us to capture more of the spatial context of the images. Our self-attention module is given by the following:
+The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762). We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projeciton. This allows us to capture more of the spatial context of the images. Our self-attention module is given by the following:
 
 ```python
 class SelfAttention2d(nn.Module):
@@ -102,6 +100,6 @@ python main.py --dataset CIFAR-10 \
 <hr>
 
 ## Results
-We test our approach on the `CIFAR-10` dataset with the intention to extend our model to 4 other small low resolution datasets: `Tiny-Imagenet`, `CIFAR100`, `CINIC10` and `SVHN`. All training took place on a single V100 GPU with total training time taking approximately 21617s. We have included the notebook in this repository that can downloaded and run in any environment with access to a GPU.
+We test our approach on the `CIFAR-10` dataset with the intention to extend our model to 4 other small low resolution datasets: `Tiny-Imagenet`, `CIFAR100`, `CINIC10` and `SVHN`. All training took place on a single V100 GPU with total training time taking approximately 21617s. We have included the notebook in this repository that can be downloaded and run in any environment with access to a GPU.
   * CIFAR10
     * ```vit_cifar10_patch2_input32``` - 96.80 @ 32
