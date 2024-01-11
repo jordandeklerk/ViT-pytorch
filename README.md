@@ -22,7 +22,7 @@ This project shows that with modifications, supervised training of vision transf
 
 <img src="./Images/vit.gif" width="500px"></img>
 
-The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762). We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projeciton. This allows us to capture more of the spatial context of the images. Our self-attention module is given by the following:
+The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762). We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projection. This allows us to capture more of the spatial attention of the images. Our self-attention module is given by the following:
 
 ```python
 class SelfAttention2d(nn.Module):
@@ -85,7 +85,7 @@ pip install -r requirements.txt
 <hr>
 
 ## Supervised Training
-This repository is intended to be run in a notebook rather than from the command line. The organization of the files is intended to break apart `main.py` to highlight the different components. Future work will be completed to turn this repository into a working directory.
+This repository is intended to be ran in a notebook rather than from the command line. The organization of the files is intended to break apart `main.py` to highlight the different components. Future work will be completed to turn this repository into a working directory.
 
 The main hyperparamerters used for training and inference are listed below. The full set of hyperparamters can be found in `parser.py`.
 ```shell
