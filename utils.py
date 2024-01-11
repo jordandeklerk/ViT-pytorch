@@ -6,6 +6,8 @@ import seaborn as sns
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
+# ============ Functions to plot CIFAR-10 Images ...====================
+
 def collate(batch):
     images, labels = zip(*batch)
     images = [np.array(img) for img in images]
@@ -14,8 +16,6 @@ def collate(batch):
     return torch.tensor(images).permute(0, 3, 1, 2), labels
 
 trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.BATCH_SIZE, shuffle=True, collate_fn=collate)
-
-
 
 def imshow(img):
     img = np.transpose(img, (1, 2, 0))
@@ -46,6 +46,7 @@ plt.show()
 
 
 
+# ============ Functions to plot CIFAR-10 Images from test set ...====================
 
 NUM_IMAGES = 4
 CIFAR_images = torch.stack([test_dset[idx][0] for idx in range(NUM_IMAGES)], dim=0)
@@ -63,6 +64,7 @@ plt.close()
 
 
 
+# ============ Functions to plot patch embedding ...====================
 
 def img_to_patch(x, patch_size, flatten_channels=True):
     """
@@ -98,6 +100,7 @@ plt.show()
 plt.close()
 
 
+# ============ Function to plot LR Scheudle ...====================
 
 lrs = []
 for epoch in range(200):
@@ -113,6 +116,7 @@ plt.grid(True)
 plt.show()
 
 
+# ============ Functions to plot cutmix images ...====================
 
 def plot_cutmix_images(model, data_loader, device):
 
