@@ -1,4 +1,4 @@
-# Training Vision Transformer on Small-scale Datasets (CIFAR-10)
+# Training Vision Transformer on CIFAR-10
 
 #
 <hr>
@@ -16,7 +16,9 @@
 ## Highlights
 This project is a implementation from scratch of a slightly modified version of the vanilla vision transformer introduced in the paper [An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale](https://arxiv.org/abs/2010.11929). We implement this model on the small scale benchmark dataset `CIFAR-10`. 
 
-Vision Transformers often suffer when trained from scratch on small datasets such as `CIFAR-10`. This is primarily due to the lack of locality, inductive biases and hierarchical structure of the representations which is commonly observed in the Convolutional Neural Networks. As a result, ViTs require large-scale pre-training to learn such properties from the data for better transfer learning to downstream tasks. This project shows that with modifications, supervised training of vision transformer models on small scale datasets like `CIFAR-10` can lead to very high accuracy with low computational constraints. 
+Vision Transformers often suffer when trained from scratch on small datasets such as `CIFAR-10`. This is primarily due to the lack of locality, inductive biases and hierarchical structure of the representations which is commonly observed in the Convolutional Neural Networks. As a result, ViTs require large-scale pre-training to learn such properties from the data for better transfer learning to downstream tasks. 
+
+This project shows that with modifications, supervised training of vision transformer models on small scale datasets like `CIFAR-10` can lead to very high accuracy with low computational constraints. 
 
 <img src="./Images/vit.gif" width="500px"></img>
 
