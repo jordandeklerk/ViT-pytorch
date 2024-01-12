@@ -104,3 +104,17 @@ python main.py --dataset CIFAR-10 \
 We test our approach on the `CIFAR-10` dataset with the intention to extend our model to 4 other small low resolution datasets: `Tiny-Imagenet`, `CIFAR100`, `CINIC10` and `SVHN`. All training took place on a single V100 GPU with total training time taking approximately 21617s. We have included the notebook in this repository that can be downloaded and run in any environment with access to a GPU.
   * CIFAR10
     * ```vit_cifar10_patch2_input32``` - 96.80 @ 32
+
+<hr>
+
+## Citations
+```bibtex
+@misc{dosovitskiy2020image,
+    title   = {An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale},
+    author  = {Alexey Dosovitskiy and Lucas Beyer and Alexander Kolesnikov and Dirk Weissenborn and Xiaohua Zhai and Thomas Unterthiner and Mostafa Dehghani and Matthias Minderer and Georg Heigold and Sylvain Gelly and Jakob Uszkoreit and Neil Houlsby},
+    year    = {2020},
+    eprint  = {2010.11929},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CV}
+}
+```
