@@ -1,4 +1,4 @@
-# Training Vision Transformer on CIFAR-10
+# Vision Transformer on CIFAR-10
 
 <hr>
 
