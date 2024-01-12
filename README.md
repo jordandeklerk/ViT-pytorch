@@ -109,6 +109,17 @@ We test our approach on the `CIFAR-10` dataset with the intention to extend our 
 
 ## Citations
 ```bibtex
+@misc{vaswani2017attention,
+    title   = {Attention Is All You Need},
+    author  = {Ashish Vaswani and Noam Shazeer and Niki Parmar and Jakob Uszkoreit and Llion Jones and Aidan N. Gomez and Lukasz Kaiser and Illia Polosukhin},
+    year    = {2017},
+    eprint  = {1706.03762},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CL}
+}
+```
+
+```bibtex
 @misc{dosovitskiy2020image,
     title   = {An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale},
     author  = {Alexey Dosovitskiy and Lucas Beyer and Alexander Kolesnikov and Dirk Weissenborn and Xiaohua Zhai and Thomas Unterthiner and Mostafa Dehghani and Matthias Minderer and Georg Heigold and Sylvain Gelly and Jakob Uszkoreit and Neil Houlsby},
