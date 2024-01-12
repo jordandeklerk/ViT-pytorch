@@ -19,7 +19,7 @@ Vision Transformers often suffer when trained from scratch on small datasets suc
 
 This project shows that with modifications, supervised training of vision transformer models on small scale datasets like `CIFAR-10` can lead to very high accuracy with low computational constraints. 
 
-<img src="./Images/vit.gif" width="550"></img>
+<img src="./Images/vit.gif" width="750"></img>
 
 The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762). We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projection. This allows us to capture more of the spatial attention of the images. Our self-attention module is given by the following:
 
