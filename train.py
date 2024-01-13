@@ -14,7 +14,7 @@ import torchvision
 from torchvision import datasets, transforms
 
 from utils.dataloader import datainfo, dataload
-from model.swin_vit import SwinTransformer
+from model.vit import ViT
 from utils.loss import LabelSmoothingCrossEntropy
 from utils.scheduler import build_scheduler  
 from utils.optimizer import get_adam_optimizer
@@ -68,6 +68,12 @@ def get_args_parser():
                     help='Label smoothing for optimizer')
     parser.add_argument('--gamma', type=float, default=1.0,
                     help='Gamma value for Cosine LR schedule')
+    parser.add_argument('--channels', type=int, default=256,
+                    help='Embedding dimension')
+    parser.add_argument('--head_channels', type=int, default=32,
+                    help='Head embedding dimension')
+    parser.add_argument('--num_blocks', type=int, default=8,
+                    help='Number of transformer blocks')
 
     # Misc
     parser.add_argument('--dataset', default='CIFAR10', type=str, choices=['CIFAR10', 'CIFAR100'], help='Please specify path to the training data.')
@@ -215,10 +221,8 @@ def main():
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
                                                 num_workers=args.num_workers, pin_memory=True)
 
-    model = SwinTransformer(args.num_classes, args.image_size,
-                        num_blocks_list=[4, 4], dims=[128, 128, 256],
-                        head_dim=32, patch_size=args.patch_size, window_size=4,
-                        emb_p_drop=0., trans_p_drop=0., head_p_drop=0.3).to(device)
+    model = ViT(args.num_classes, args.image_size, channels=args.channels, head_channels=args.head_channels, num_blocks=args.num_blocks, patch_size=args.patch_size,
+               emb_p_drop=0., trans_p_drop=0., head_p_drop=0.3).to(device)
 
     loss = LabelSmoothingCrossEntropy()
     optimizer = get_adam_optimizer(model.parameters(), lr=args.lr, wd=args.weight_decay)
