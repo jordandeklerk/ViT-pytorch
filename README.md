@@ -96,7 +96,7 @@ python train.py
 <hr>
 
 ## Results
-We test our approach on the `CIFAR-10` dataset with the intention to extend our model to 4 other small low resolution datasets: `Tiny-Imagenet`, `CIFAR100`, `CINIC10` and `SVHN`. All training took place on a single V100 GPU with total training time taking approximately 21617s. We have included the notebook in this repository that can be downloaded and run in any environment with access to a GPU.
+We test our approach on the `CIFAR-10` dataset with the intention to extend our model to 4 other small low resolution datasets: `Tiny-Imagenet`, `CIFAR100`, `CINIC10` and `SVHN`. All training took place on a single V100 GPU with total training time taking approximately 21617s.
   * CIFAR10
     * ```vit_cifar10_patch2_input32``` - 96.80 @ 32
 
