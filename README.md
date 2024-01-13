@@ -100,6 +100,19 @@ We test our approach on the `CIFAR-10` dataset with the intention to extend our 
   * CIFAR10
     * ```vit_cifar10_patch2_input32``` - 96.80 @ 32
 
+Flop analysis:
+```
+total flops: 1893960192
+total activations: 9535498
+number of parameter: 6482138
+| module   | #parameters or shape   | #flops   |
+|:---------|:-----------------------|:---------|
+| model    | 6.482M                 | 1.894G   |
+|  0       |  99.456K               |  9.273M  |
+|  1       |  6.38M                 |  1.884G  |
+|  2       |  3.082K                |  0.396M  |
+```
+
 <hr>
 
 ## Citations
