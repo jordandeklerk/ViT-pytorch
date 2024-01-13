@@ -6,7 +6,7 @@
 
 1. [Highlights](#Highlights)
 2. [Requirements](#Requirements)
-3. [Supervised Training](#Training)
+3. [Usage](#Training)
 4. [Results](#Results)
 
 
@@ -83,19 +83,14 @@ pip install -r requirements.txt
 
 <hr>
 
-## Supervised Training
-This repository is intended to be ran in a notebook rather than from the command line. The organization of the files is intended to break apart `main.py` to highlight the different components. Future work will be completed to turn this repository into a working directory.
-
-The main hyperparamerters used for training and inference are listed below. The full set of hyperparamters can be found in `parser.py`.
+## Usage
+To replicate the reported results, clone this repo
 ```shell
-python main.py --dataset CIFAR-10 \
-               --datapath "/path/to/data/folder" \
-               --batch_size 128 \
-               --epochs 200 \
-               --learning rate 1e-3 \
-               --weight decay 1e-1 \
-               --min lr 1e-5 \
-               --warm-up epochs 10 \
+cd your_directory git clone git@github.com:jordandeklerk/ViT-pytorch.git
+```
+and run the main training script
+```shell
+python train.py 
 ```
 
 <hr>
