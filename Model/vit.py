@@ -58,9 +58,9 @@ class Attention(nn.Module):
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
         all_head_dim = head_dim * self.num_heads
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.qkv = nn.Conv2d(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(all_head_dim, dim)
+        self.proj = nn.Conv2d(all_head_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):

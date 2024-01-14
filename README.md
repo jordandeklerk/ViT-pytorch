@@ -24,53 +24,32 @@ This project shows that with modifications, supervised training of vision transf
 The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762). We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projection. This allows us to capture more of the spatial attention of the images. Our self-attention module is given by the following:
 
 ```python
-class SelfAttention2d(nn.Module):
-    def __init__(self, in_channels, out_channels, head_channels, shape):
+class Attention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
         super().__init__()
-        self.heads = out_channels // head_channels
-        self.head_channels = head_channels
-        self.scale = head_channels**-0.5
-
-        self.to_keys = nn.Conv2d(in_channels, out_channels, 1)
-        self.to_queries = nn.Conv2d(in_channels, out_channels, 1)
-        self.to_values = nn.Conv2d(in_channels, out_channels, 1)
-        self.unifyheads = nn.Conv2d(out_channels, out_channels, 1)
-
-        height, width = shape
-        self.pos_enc = nn.Parameter(torch.Tensor(self.heads, (2 * height - 1) * (2 * width - 1)))
-        self.register_buffer("relative_indices", self.get_indices(height, width))
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+        all_head_dim = head_dim * self.num_heads
+        self.qkv = nn.Conv2d(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Conv2d(all_head_dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        b, _, h, w = x.shape
+        B, N, C = x.shape
+        
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
 
-        keys = self.to_keys(x).view(b, self.heads, self.head_channels, -1)
-        values = self.to_values(x).view(b, self.heads, self.head_channels, -1)
-        queries = self.to_queries(x).view(b, self.heads, self.head_channels, -1)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
 
-        att = keys.transpose(-2, -1) @ queries
-
-        indices = self.relative_indices.expand(self.heads, -1)
-        rel_pos_enc = self.pos_enc.gather(-1, indices)
-        rel_pos_enc = rel_pos_enc.unflatten(-1, (h * w, h * w))
-
-        att = att * self.scale + rel_pos_enc
-        att = F.softmax(att, dim=-2)
-
-        out = values @ att
-        out = out.view(b, -1, h, w)
-        out = self.unifyheads(out)
-        return out
-
-    @staticmethod
-    def get_indices(h, w):
-        y = torch.arange(h, dtype=torch.long)
-        x = torch.arange(w, dtype=torch.long)
-
-        y1, x1, y2, x2 = torch.meshgrid(y, x, y, x, indexing='ij')
-        indices = (y1 - y2 + h - 1) * (2 * w - 1) + x1 - x2 + w - 1
-        indices = indices.flatten()
-
-        return indices
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x, attn
 ```
 
 
@@ -102,15 +81,17 @@ We test our approach on the `CIFAR-10` dataset with the intention to extend our 
 
 Flop analysis:
 ```
-total flops: 1893960192
-total activations: 9535498
-number of parameter: 6482138
-| module   | #parameters or shape   | #flops   |
-|:---------|:-----------------------|:---------|
-| model    | 6.482M                 | 1.894G   |
-|  0       |  99.456K               |  9.273M  |
-|  1       |  6.38M                 |  1.884G  |
-|  2       |  3.082K                |  0.396M  |
+total flops: 915674304
+total activations: 10735212
+number of parameter: 2725632
+| module            | #parameters or shape   | #flops   |
+|:------------------|:-----------------------|:---------|
+| model             | 2.726M                 | 0.916G   |
+|  cls_token        |  (1, 1, 192)           |          |
+|  pos_embed        |  (1, 257, 192)         |          |
+|  patch_embed.proj |  2.496K                |  0.59M   |
+|  blocks           |  2.673M                |  0.915G  |
+|  norm             |  0.384K                |  0.247M  |
 ```
 
 <hr>
