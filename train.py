@@ -21,6 +21,7 @@ from utils.loss import LabelSmoothingCrossEntropy
 from utils.scheduler import build_scheduler  
 from utils.optimizer import get_adam_optimizer
 from utils.utils import clip_gradients
+from utils.utils import save_checkpoint, load_checkpoint
 
 
 def get_args_parser():
@@ -90,129 +91,85 @@ def get_args_parser():
     return parser
 
 
-class History:
-    def __init__(self):
-        self.values = defaultdict(list)
 
-    def append(self, key, value):
-        self.values[key].append(value)
-
-    def reset(self):
-        for k in self.values.keys():
-            self.values[k] = []
-
-    def _begin_plot(self):
-        self.fig = plt.figure()
-        self.ax = self.fig.add_subplot(111)
-
-    def _end_plot(self, ylabel):
-        self.ax.set_xlabel('epoch')
-        self.ax.set_ylabel(ylabel)
-        plt.show()
-
-    def _plot(self, key, line_type='-', label=None):
-        if label is None: label=key
-        xs = np.arange(1, len(self.values[key])+1)
-        self.ax.plot(xs, self.values[key], line_type, label=label)
-
-    def plot(self, key):
-        self._begin_plot()
-        self._plot(key, '-')
-        self._end_plot(key)
-
-    def plot_train_val(self, key):
-        self._begin_plot()
-        self._plot('train ' + key, '.-', 'train')
-        self._plot('val ' + key, '.-', 'val')
-        self.ax.legend()
-        self._end_plot(key)
-
-
-class Learner:
-    def __init__(self, model, loss, optimizer, train_loader, val_loader, device,
-                 epoch_scheduler=None, batch_scheduler=None, seed=42, clip=None):
-        # Set seeds for reproducibility
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        np.random.seed(seed)
-        random.seed(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    
+class Trainer:
+    def __init__(self, model, train_loader, val_loader, optimizer, lr_scheduler, loss, device, args):
         self.model = model
-        self.loss = loss
-        self.optimizer = optimizer
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.optimizer = optimizer
+        self.lr_scheduler = lr_scheduler
+        self.loss = loss
         self.device = device
-        self.epoch_scheduler = epoch_scheduler
-        self.batch_scheduler = batch_scheduler
-        self.clip = clip
-        self.history = History()
-    
-    
-    def iterate(self, loader, msg="", backward_pass=False):
-        total_loss = 0.0
-        num_samples = 0
-        num_correct = 0
-        
-        pbar = tqdm(enumerate(loader), total=len(loader))
-        for it, (X, Y) in pbar:
-            X, Y = X.to(self.device), Y.to(self.device)
-            Y_pred = self.model(X)
-            batch_size = X.size(0)
-            batch_loss = self.loss(Y_pred, Y)
-            if backward_pass:
+        self.args = args
+
+        self.logger = logging.getLogger(__name__)
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    def train(self):
+        train_losses, val_losses, train_accuracies, val_accuracies = [], [], [], []
+
+        best_accuracy = 0.0
+
+        for epoch in range(self.args.epochs):
+            self.model.train()
+            total_loss, total_correct = 0.0, 0
+
+            train_progress_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{self.args.epochs} [Training]", total=len(train_loader))
+            for images, labels in train_progress_bar:
+                images, labels = images.to(self.device), labels.to(self.device)
+
                 self.optimizer.zero_grad()
-                batch_loss.backward()
-                if self.clip is not None:  
-                    clip_gradients(self.model, self.clip)
+                outputs = self.model(images)
+                loss = self.loss_fn(outputs, labels)
+                loss.backward()
+
+                if self.args.clip_grad > 0:
+                    self.clip_gradients()
+
                 self.optimizer.step()
-                if self.batch_scheduler is not None:
-                    self.batch_scheduler.step()
-            
-            Y_pred.detach_() # conserve memory
-            labels_pred = torch.argmax(Y_pred, -1)
-            total_loss += batch_size * batch_loss.item()
-            num_correct += (labels_pred == Y).sum().item()
-            num_samples += batch_size
-            
-            pbar.set_description(msg)
-            pbar.set_postfix(loss=total_loss / num_samples, acc=float(num_correct) / num_samples)
-    
-        avg_loss = total_loss / num_samples
-        accuracy = float(num_correct) / num_samples
-        return avg_loss, accuracy
-    
-    
-    def train(self, msg):
-        self.model.train()
-        train_loss, train_acc = self.iterate(self.train_loader, msg + ' train:', backward_pass=True)
-        self.history.append('train loss', train_loss)
-        self.history.append('train acc', train_acc)
-        return train_loss, train_acc
 
-        
-    def validate(self, msg):
-        self.model.eval()
-        with torch.no_grad():
-            val_loss, val_acc = self.iterate(self.val_loader, msg + ' val:')
-        self.history.append('val loss', val_loss)
-        self.history.append('val acc', val_acc)
-        return val_loss, val_acc
+                total_loss += loss.item()
+                _, predicted = torch.max(outputs.data, 1)
+                total_correct += (predicted == labels).sum().item()
+                train_progress_bar.set_postfix({"Train Loss": total_loss / (train_progress_bar.n + 1)})
 
+            avg_train_loss = total_loss / len(train_loader)
+            train_accuracy = total_correct / len(train_loader.dataset)
+            train_losses.append(avg_train_loss)
+            train_accuracies.append(train_accuracy)
 
-    def fit(self, epochs):
-        pbar = tqdm(range(epochs))
-        for e in pbar:
-            msg = f'epoch {e+1}/{epochs}'
-            train_loss, train_acc = self.train(msg)
-            val_loss, val_acc = self.validate(msg)
-            if self.epoch_scheduler is not None:
-                self.epoch_scheduler.step()
-            lr = self.optimizer.param_groups[0]['lr']
-            pbar.set_description(msg)
-            pbar.set_postfix(train_loss=train_loss, train_acc=train_acc, val_loss=val_loss, val_acc=val_acc, lr=lr)
+            self.model.eval()
+            total_loss, total_correct = 0.0, 0
+            val_progress_bar = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{self.args.epochs} [Validation]", total=len(val_loader))
+            with torch.no_grad():
+                for images, labels in val_progress_bar:
+                    images, labels = images.to(self.device), labels.to(self.device)
+                    outputs = self.model(images)
+                    loss = self.loss_fn(outputs, labels)
+                    total_loss += loss.item()
+                    _, predicted = torch.max(outputs.data, 1)
+                    total_correct += (predicted == labels).sum().item()
+                    val_progress_bar.set_postfix({"Val Loss": total_loss / (val_progress_bar.n + 1)})
+
+            avg_val_loss = total_loss / len(val_loader)
+            val_accuracy = total_correct / len(val_loader.dataset)
+            val_losses.append(avg_val_loss)
+            val_accuracies.append(val_accuracy)
+
+            self.logger.info(f"Epoch {epoch + 1}/{self.args.epochs}: Train Loss: {avg_train_loss:.4f}, Train Acc: {train_accuracy:.4f}, Val Loss: {avg_val_loss:.4f}, Val Acc: {val_accuracy:.4f}")
+
+            if val_accuracy > best_accuracy:
+                best_accuracy = val_accuracy
+                torch.save(self.model.state_dict(), "best_model.pth")
+                self.logger.info(f"New best accuracy: {best_accuracy:.4f}, Model saved as 'best_model.pth'")
+
+            self.lr_scheduler.step()
+
+            # Save checkpoint at the end of each epoch
+            self.save_checkpoint(epoch)
+
+        return train_losses, val_losses, train_accuracies, val_accuracies
 
 
 def main():
@@ -247,10 +204,7 @@ def main():
     optimizer = get_adam_optimizer(model.parameters(), lr=args.lr, wd=args.weight_decay)
     lr_scheduler = build_scheduler(args, optimizer)
     
-    learner = Learner(model, loss, optimizer, train_loader, val_loader, device, args.clip_grad)
-    learner.batch_scheduler = lr_scheduler
-
-    learner.fit(args.epochs)
+    Trainer(model, train_loader, val_loader, optimizer, lr_scheduler, loss, device, args).train()
 
 if __name__ == "__main__":
     main()

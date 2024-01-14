@@ -2,6 +2,8 @@ import json, os, math
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import os
+import logging
 from torch.nn import functional as F
 from typing import Tuple
 import torchvision
@@ -15,6 +17,31 @@ from torch.nn import Module
 
 from accelerate import Accelerator
 from accelerate.tracking import WandBTracker
+
+
+
+def save_checkpoint(self, epoch, filename="checkpoint.pth.tar"):
+    """ Save the current state of the model, optimizer, and lr_scheduler. """
+    state = {
+        'epoch': epoch,
+        'state_dict': self.model.state_dict(),
+        'optimizer': self.optimizer.state_dict(),
+        'lr_scheduler': self.lr_scheduler.state_dict()
+        }
+    torch.save(state, filename)
+    self.logger.info(f"Checkpoint saved at epoch {epoch}")
+
+    
+def load_checkpoint(self, filename="checkpoint.pth.tar"):
+    """ Load the state of the model, optimizer, and lr_scheduler from a checkpoint. """
+    if os.path.isfile(filename):
+        checkpoint = torch.load(filename)
+        self.model.load_state_dict(checkpoint['state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        self.lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        self.logger.info(f"Loaded checkpoint '{filename}' (epoch {checkpoint['epoch']})")
+    else:
+        self.logger.info(f"No checkpoint found at '{filename}'")
 
 
 def has_batchnorms(model):
