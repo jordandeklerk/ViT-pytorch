@@ -6,7 +6,7 @@
 
 1. [Highlights](#Highlights)
 2. [Requirements](#Requirements)
-3. [Usage](#Training)
+3. [Usage](#Usage)
 4. [Results](#Results)
 
 

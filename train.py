@@ -13,15 +13,18 @@ import torch.nn.functional as F
 import torchvision
 from torchvision import datasets, transforms
 
+from functools import partial
+
 from utils.dataloader import datainfo, dataload
 from model.vit import ViT
 from utils.loss import LabelSmoothingCrossEntropy
 from utils.scheduler import build_scheduler  
 from utils.optimizer import get_adam_optimizer
+from utils.utils import clip_gradients
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('SWIN ViT for CIFAR-10', add_help=False)
+    parser = argparse.ArgumentParser('ViT for CIFAR-10', add_help=False)
     parser.add_argument('--dir', type=str, default='./data',
                     help='Data directory')
     parser.add_argument('--num_classes', type=int, default=10, choices=[10, 100, 1000],
@@ -61,6 +64,9 @@ def get_args_parser():
         help="Number of epochs for the linear learning-rate warm up.")
     parser.add_argument('--min_lr', type=float, default=1e-6, help="""Target LR at the
         end of optimization. We use a cosine LR schedule with linear warmup.""")
+    parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
+        gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
+        help optimization for larger ViT architectures. 0 for disabling.""")
     parser.add_argument('--optimizer', default='adamw', type=str,
         choices=['adamw', 'sgd', 'lars'], help="""Type of optimizer. Recommend using adamw with ViTs.""")
     parser.add_argument('--drop_path_rate', type=float, default=0.1, help="stochastic depth rate")
@@ -124,7 +130,7 @@ class History:
 
 class Learner:
     def __init__(self, model, loss, optimizer, train_loader, val_loader, device,
-                 epoch_scheduler=None, batch_scheduler=None, seed=42):
+                 epoch_scheduler=None, batch_scheduler=None, seed=42, clip=None):
         # Set seeds for reproducibility
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
@@ -141,6 +147,7 @@ class Learner:
         self.device = device
         self.epoch_scheduler = epoch_scheduler
         self.batch_scheduler = batch_scheduler
+        self.clip = clip
         self.history = History()
     
     
@@ -158,6 +165,8 @@ class Learner:
             if backward_pass:
                 self.optimizer.zero_grad()
                 batch_loss.backward()
+                if self.clip is not None:  
+                    clip_gradients(self.model, self.clip)
                 self.optimizer.step()
                 if self.batch_scheduler is not None:
                     self.batch_scheduler.step()
@@ -221,14 +230,24 @@ def main():
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
                                                 num_workers=args.num_workers, pin_memory=True)
 
-    model = ViT(args.num_classes, args.image_size, channels=args.channels, head_channels=args.head_channels, num_blocks=args.num_blocks, patch_size=args.patch_size,
-               emb_p_drop=0., trans_p_drop=0., head_p_drop=0.3).to(device)
+    model = ViT(img_size=[args.image_size],
+            patch_size=args.patch_size,
+            in_chans=args.in_channels,
+            num_classes=0,
+            embed_dim=192,
+            depth=9,
+            num_heads=12,
+            mlp_ratio=2,
+            qkv_bias=args.qkv_bias,
+            drop_rate=args.drop_rate,
+            drop_path_rate=args.drop_path_rate,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6)).to(device)
 
     loss = LabelSmoothingCrossEntropy()
     optimizer = get_adam_optimizer(model.parameters(), lr=args.lr, wd=args.weight_decay)
     lr_scheduler = build_scheduler(args, optimizer)
     
-    learner = Learner(model, loss, optimizer, train_loader, val_loader, device)
+    learner = Learner(model, loss, optimizer, train_loader, val_loader, device, args.clip_grad)
     learner.batch_scheduler = lr_scheduler
 
     learner.fit(args.epochs)

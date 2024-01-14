@@ -1,224 +1,221 @@
+import math
+from functools import partial
+
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-import torchvision
-from torchvision import datasets, transforms
-from torch.optim.lr_scheduler import _LRScheduler
 
-class Residual(nn.Module):
-    def __init__(self, *layers):
-        super().__init__()
-        self.residual = nn.Sequential(*layers)
-        self.gamma = nn.Parameter(torch.zeros(1))
+from einops import rearrange, repeat
+from einops.layers.torch import Rearrange
+
+
+def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
+    # type: (Tensor, float, float, float, float) -> Tensor
+    return _no_grad_trunc_normal_(tensor, mean, std, a, b)
+
+def drop_path(x, drop_prob: float = 0., training: bool = False):
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+
+class DropPath(nn.Module):
+    def __init__(self, drop_prob=None):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
 
     def forward(self, x):
-        return x + self.gamma * self.residual(x)
+        return drop_path(x, self.drop_prob, self.training)
 
 
-class LayerNormChannels(nn.Module):
-    def __init__(self, channels):
+class Mlp(nn.Module):
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
-        self.norm = nn.LayerNorm(channels)
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
 
     def forward(self, x):
-        x = x.transpose(1, -1)
-        x = self.norm(x)
-        x = x.transpose(-1, 1)
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
         return x
 
 
-class SelfAttention2d(nn.Module):
-    def __init__(self, in_channels, out_channels, head_channels, shape):
+class Attention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
         super().__init__()
-        self.heads = out_channels // head_channels
-        self.head_channels = head_channels
-        self.scale = head_channels**-0.5
-
-        self.to_keys = nn.Conv2d(in_channels, out_channels, 1)
-        self.to_queries = nn.Conv2d(in_channels, out_channels, 1)
-        self.to_values = nn.Conv2d(in_channels, out_channels, 1)
-        self.unifyheads = nn.Conv2d(out_channels, out_channels, 1)
-
-        height, width = shape
-        self.pos_enc = nn.Parameter(torch.Tensor(self.heads, (2 * height - 1) * (2 * width - 1)))
-        self.register_buffer("relative_indices", self.get_indices(height, width))
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+        all_head_dim = head_dim * self.num_heads
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(all_head_dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
-        b, _, h, w = x.shape
+        B, N, C = x.shape
+        
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
 
-        keys = self.to_keys(x).view(b, self.heads, self.head_channels, -1)
-        values = self.to_values(x).view(b, self.heads, self.head_channels, -1)
-        queries = self.to_queries(x).view(b, self.heads, self.head_channels, -1)
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
 
-        att = keys.transpose(-2, -1) @ queries
-
-        indices = self.relative_indices.expand(self.heads, -1)
-        rel_pos_enc = self.pos_enc.gather(-1, indices)
-        rel_pos_enc = rel_pos_enc.unflatten(-1, (h * w, h * w))
-
-        att = att * self.scale + rel_pos_enc
-        att = F.softmax(att, dim=-2)
-
-        out = values @ att
-        out = out.view(b, -1, h, w)
-        out = self.unifyheads(out)
-        return out
-
-    @staticmethod
-    def get_indices(h, w):
-        y = torch.arange(h, dtype=torch.long)
-        x = torch.arange(w, dtype=torch.long)
-
-        y1, x1, y2, x2 = torch.meshgrid(y, x, y, x, indexing='ij')
-        indices = (y1 - y2 + h - 1) * (2 * w - 1) + x1 - x2 + w - 1
-        indices = indices.flatten()
-
-        return indices
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x, attn
 
 
-class FeedForward(nn.Sequential):
-    def __init__(self, in_channels, out_channels, mult=4):
-        hidden_channels = in_channels * mult
-        super().__init__(
-            nn.Conv2d(in_channels, hidden_channels, 1),
-            nn.GELU(),
-            nn.Conv2d(hidden_channels, out_channels, 1)
-        )
-
-
-class TransformerBlock(nn.Sequential):
-    def __init__(self, channels, head_channels, shape, p_drop=0.):
-        super().__init__(
-            Residual(
-                LayerNormChannels(channels),
-                SelfAttention2d(channels, channels, head_channels, shape),
-                nn.Dropout(p_drop)
-            ),
-            Residual(
-                LayerNormChannels(channels),
-                FeedForward(channels, channels),
-                nn.Dropout(p_drop)
-            )
-        )
-
-
-class TransformerStack(nn.Sequential):
-    def __init__(self, num_blocks, channels, head_channels, shape, p_drop=0.):
-        layers = [TransformerBlock(channels, head_channels, shape, p_drop) for _ in range(num_blocks)]
-        super().__init__(*layers)
-
-
-class ToPatches(nn.Sequential):
-    def __init__(self, in_channels, channels, patch_size, hidden_channels=32):
-        super().__init__(
-            nn.Conv2d(in_channels, hidden_channels, 3, padding=1),
-            nn.GELU(),
-            nn.Conv2d(hidden_channels, channels, patch_size, stride=patch_size)
-        )
-
-
-class AddPositionEmbedding(nn.Module):
-    def __init__(self, channels, shape):
+class Block(nn.Module):
+    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
-        self.pos_embedding = nn.Parameter(torch.Tensor(channels, *shape))
+        self.norm1 = norm_layer(dim)
+        self.attn = Attention(
+            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+
+    def forward(self, x, return_attention=False):
+        y, attn = self.attn(self.norm1(x))
+        if return_attention:
+            return attn
+        x = x + self.drop_path(y)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        return x
+
+
+class PatchEmbed(nn.Module):
+    """ Image to Patch Embedding
+    """
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=384):
+        super().__init__()
+        num_patches = (img_size // patch_size) * (img_size // patch_size)
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.num_patches = num_patches
+
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x):
-        return x + self.pos_embedding
+        B, C, H, W = x.shape
+        x = self.proj(x).flatten(2).transpose(1, 2)
+        return x
 
 
-class ToEmbedding(nn.Sequential):
-    def __init__(self, in_channels, channels, patch_size, shape, p_drop=0.):
-        super().__init__(
-            ToPatches(in_channels, channels, patch_size),
-            AddPositionEmbedding(channels, shape),
-            nn.Dropout(p_drop)
+class ViT(nn.Module):
+    """ Vision Transformer """
+    def __init__(self, img_size=[224], patch_size=16, in_chans=3, num_classes=0, embed_dim=384, depth=12,
+                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
+                 drop_path_rate=0., norm_layer=nn.LayerNorm, **kwargs):
+        super().__init__()
+        self.num_features = self.embed_dim = embed_dim
+        self.patch_size = patch_size
+        self.in_chans = in_chans
+        self.patch_embed = PatchEmbed(
+            img_size=img_size[0], patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+        self.num_patches = self.patch_embed.num_patches
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer)
+            for i in range(depth)])
+        self.norm = norm_layer(embed_dim)
+
+        # Classifier head
+        self.head = nn.Linear(embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+        trunc_normal_(self.pos_embed, std=.02)
+        trunc_normal_(self.cls_token, std=.02)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    def interpolate_pos_encoding(self, x, w, h):
+        npatch = x.shape[1] - 1
+        N = self.pos_embed.shape[1] - 1
+        if npatch == N and w == h:
+            return self.pos_embed
+        class_pos_embed = self.pos_embed[:, 0]
+        patch_pos_embed = self.pos_embed[:, 1:]
+        dim = x.shape[-1]
+        w0 = w // self.patch_embed.patch_size
+        h0 = h // self.patch_embed.patch_size
+        w0, h0 = w0 + 0.1, h0 + 0.1
+        patch_pos_embed = nn.functional.interpolate(
+            patch_pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
+            scale_factor=(w0 / math.sqrt(N), h0 / math.sqrt(N)),
+            mode='bicubic',
         )
+        assert int(w0) == patch_pos_embed.shape[-2] and int(h0) == patch_pos_embed.shape[-1]
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
 
 
-class Head(nn.Sequential):
-    def __init__(self, in_channels, classes, p_drop=0.):
-        super().__init__(
-            LayerNormChannels(in_channels),
-            nn.GELU(),
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            nn.Dropout(p_drop),
-            nn.Linear(in_channels, classes)
-        )
 
 
-class ViT(nn.Sequential):
-    """
-    Vision Transformer model using CutMix.
+    def prepare_tokens(self, x):
+        B, nc, w, h = x.shape
+        x = self.patch_embed(x)  # patch linear embedding
+        B, L, _  = x.shape
 
-    Args:
-        classes (int): Number of output classes.
-        image_size (int): The size of the input images (assumed to be square).
-        channels (int): The number of channels in the input images.
-        head_channels (int): The number of channels in the transformer heads.
-        num_blocks (int): The number of transformer blocks.
-        patch_size (int): The size of the patches to divide the images into.
-        in_channels (int, optional): The number of input channels. Default is 3 (RGB).
-        emb_p_drop (float, optional): Dropout probability for the embedding layer. Default is 0.
-        trans_p_drop (float, optional): Dropout probability for the transformer layer. Default is 0.
-        head_p_drop (float, optional): Dropout probability for the head layer. Default is 0.
+        # add the [CLS] token to the embed patch tokens
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        # add positional encoding to each token
+        x = x + self.interpolate_pos_encoding(x, w, h)
 
-    Attributes:
-        parameters_decay (set): Set of parameters that will have weight decay applied during optimization.
-        parameters_no_decay (set): Set of parameters that will not have weight decay applied during optimization.
-    """
+        return self.pos_drop(x)
 
-    def __init__(self, classes, image_size, channels, head_channels, num_blocks, patch_size,
-                 in_channels=3, emb_p_drop=0., trans_p_drop=0., head_p_drop=0.):
-        reduced_size = image_size // patch_size
-        shape = (reduced_size, reduced_size)
-        super().__init__(
-            ToEmbedding(in_channels, channels, patch_size, shape, emb_p_drop),
-            TransformerStack(num_blocks, channels, head_channels, shape, trans_p_drop),
-            Head(channels, classes, head_p_drop)
-        )
-        self.reset_parameters()
+    def forward(self, x):
+        x = self.prepare_tokens(x)
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+        return self.head(x[:,0])
 
-    def reset_parameters(self):
-        for m in self.modules():
-            if isinstance(m, (nn.Conv2d, nn.Linear)):
-                nn.init.kaiming_normal_(m.weight)
-                if m.bias is not None: nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.LayerNorm):
-                nn.init.constant_(m.weight, 1.)
-                nn.init.zeros_(m.bias)
-            elif isinstance(m, AddPositionEmbedding):
-                nn.init.normal_(m.pos_embedding, mean=0.0, std=0.02)
-            elif isinstance(m, SelfAttention2d):
-                nn.init.normal_(m.pos_enc, mean=0.0, std=0.02)
-            elif isinstance(m, Residual):
-                nn.init.zeros_(m.gamma)
+    def get_last_selfattention(self, x):
+        x = self.prepare_tokens(x)
+        for i, blk in enumerate(self.blocks):
+            if i < len(self.blocks) - 1:
+                x = blk(x)
+            else:
+                # return attention of the last block
+                return blk(x, return_attention=True)
 
-    def separate_parameters(self):
-        parameters_decay = set()
-        parameters_no_decay = set()
-        modules_weight_decay = (nn.Linear, nn.Conv2d)
-        modules_no_weight_decay = (nn.LayerNorm,)
-
-        for m_name, m in self.named_modules():
-            for param_name, param in m.named_parameters():
-                full_param_name = f"{m_name}.{param_name}" if m_name else param_name
-
-                if isinstance(m, modules_no_weight_decay):
-                    parameters_no_decay.add(full_param_name)
-                elif param_name.endswith("bias"):
-                    parameters_no_decay.add(full_param_name)
-                elif isinstance(m, Residual) and param_name.endswith("gamma"):
-                    parameters_no_decay.add(full_param_name)
-                elif isinstance(m, AddPositionEmbedding) and param_name.endswith("pos_embedding"):
-                    parameters_no_decay.add(full_param_name)
-                elif isinstance(m, SelfAttention2d) and param_name.endswith("pos_enc"):
-                    parameters_no_decay.add(full_param_name)
-                elif isinstance(m, modules_weight_decay):
-                    parameters_decay.add(full_param_name)
-
-        assert len(parameters_decay & parameters_no_decay) == 0
-        assert len(parameters_decay) + len(parameters_no_decay) == len(list(model.parameters()))
-
-        return parameters_decay, parameters_no_decay
+    def get_intermediate_layers(self, x, n=1):
+        x = self.prepare_tokens(x)
+        # we return the output tokens from the `n` last blocks
+        output = []
+        for i, blk in enumerate(self.blocks):
+            x = blk(x)
+            if len(self.blocks) - i <= n:
+                output.append(self.norm(x))
+        return output
