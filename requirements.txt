@@ -1,5 +1,8 @@
 numpy==1.26.1
+matplotlib==3.7.2
 seaborn==0.13.0
+tqdm==4.65.0
 torch==2.1.1
 torchvision==0.16.1
 ignite==0.4.13
+einops==0.7.0

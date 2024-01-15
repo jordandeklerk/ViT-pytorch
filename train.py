@@ -26,6 +26,8 @@ from einops.layers.torch import Rearrange
 
 from functools import partial
 
+from ignite.utils import convert_tensor
+
 from utils.dataloader import datainfo, dataload
 from model.vit import ViT
 from utils.loss import LabelSmoothingCrossEntropy
@@ -33,6 +35,7 @@ from utils.scheduler import build_scheduler
 from utils.optimizer import get_adam_optimizer
 from utils.utils import clip_gradients
 from utils.utils import save_checkpoint, load_checkpoint
+from utils.cutmix import CutMix
 
 
 def get_args_parser():
@@ -68,7 +71,7 @@ def get_args_parser():
         weight decay. With ViT, a smaller value at the beginning of training works well.""")
     parser.add_argument('--batch_size', default=128, type=int,
         help='Per-GPU batch-size : number of distinct images loaded on one GPU.')
-    parser.add_argument('--epochs', default=100, type=int, help='Number of epochs of training.')
+    parser.add_argument('--epochs', default=200, type=int, help='Number of epochs of training.')
     parser.add_argument("--lr", default=0.001, type=float, help="""Learning rate at the end of
         linear warmup (highest LR used during training). The learning rate is linearly scaled
         with the batch size, and specified here for a reference batch size of 256.""")
@@ -76,6 +79,9 @@ def get_args_parser():
         help="Number of epochs for the linear learning-rate warm up.")
     parser.add_argument('--min_lr', type=float, default=1e-6, help="""Target LR at the
         end of optimization. We use a cosine LR schedule with linear warmup.""")
+    parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
+        gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
+        help optimization for larger ViT architectures. 0 for disabling.""")
     parser.add_argument('--optimizer', default='adamw', type=str,
         choices=['adamw', 'sgd', 'lars'], help="""Type of optimizer. Recommend using adamw with ViTs.""")
     parser.add_argument('--drop_path_rate', type=float, default=0.1, help="stochastic depth rate")
@@ -84,12 +90,12 @@ def get_args_parser():
     parser.add_argument('--gamma', type=float, default=1.0,
                     help='Gamma value for Cosine LR schedule')
 
+
     # Misc
     parser.add_argument('--dataset', default='CIFAR10', type=str, choices=['CIFAR10', 'CIFAR100'], help='Please specify path to the training data.')
     parser.add_argument('--seed', default=42, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--mlp_head_in", default=192, type=int, help="input dimension going inside MLP projection head")
-    parser.add_argument('--checkpoint_dir', default=".", type=str, help='Path to save logs and checkpoints.')
     return parser
 
 
@@ -105,39 +111,30 @@ class Trainer:
         self.device = device
         self.args = args
         self.scaler = GradScaler()
+        self.cutmix = CutMix(loss_fn)
 
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     def train(self):
+        print("\n--- Training Progress ---\n")
+
         train_losses, val_losses, train_accuracies, val_accuracies = [], [], [], []
         best_accuracy = 0.0
-        
-        print("\n--- GPU Information ---\n")
-        
-        if torch.cuda.is_available():
-            print(f"Model is using device: {self.device}")
-            print(f"CUDA Device: {torch.cuda.get_device_name(self.device)}")
-            print(f"Total Memory: {torch.cuda.get_device_properties(self.device).total_memory / 1024 ** 2} MB")
-        else:
-            print("Model is using CPU")
 
         for epoch in range(self.args.epochs):
             epoch_progress_bar = tqdm(total=len(self.train_loader) + len(self.val_loader), desc=f"Epoch {epoch + 1}/{self.args.epochs}")
-            
-            print()
-            print("\n--- Training Progress ---\n")
 
             # Training Phase
             self.model.train()
             total_train_loss, total_train_correct = 0.0, 0
-            for images, labels in self.train_loader:
-                images, labels = images.to(self.device), labels.to(self.device)
+            for batch in self.train_loader:
+                images, labels = self.cutmix.prepare_batch(batch, self.device, non_blocking=True)
                 self.optimizer.zero_grad()
 
                 with autocast():
                     outputs = self.model(images)
-                    loss = self.loss_fn(outputs, labels)
+                    loss = self.cutmix(outputs, labels)
 
                 self.scaler.scale(loss).backward()
 
@@ -191,30 +188,35 @@ class Trainer:
 
 def main():
     args, unknown = get_args_parser().parse_known_args()
+    args.checkpoint_dir = "your_dir"
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
-    np.random.seed(args.seed) 
-    random.seed(args.seed) 
+    np.random.seed(args.seed)
+    random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    data_info = datainfo(args)
-    normalize = [transforms.Normalize(mean=data_info['stat'][0], std=data_info['stat'][1])]
+    print("\n--- GPU Information ---\n")
+
+    if torch.cuda.is_available():
+        print(f"Model is using device: {device}")
+        print(f"CUDA Device: {torch.cuda.get_device_name(device)}")
+        print(f"Total Memory: {torch.cuda.get_device_properties(device).total_memory / 1024 ** 2} MB")
+    else:
+        print("Model is using CPU")
 
     print("\n--- Downloading Data ---\n")
 
-    train_dataset, val_dataset = dataload(args, normalize, data_info)   
+    train_dataset, val_dataset = dataload(args)
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
                                                 num_workers=args.num_workers, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
                                                 num_workers=args.num_workers, pin_memory=True)
-    
-    print("\n--- Training and Validation Data Ready ---\n")
 
     model = ViT(img_size=[args.image_size],
             patch_size=args.patch_size,
@@ -229,10 +231,11 @@ def main():
             drop_path_rate=args.drop_path_rate,
             norm_layer=partial(nn.LayerNorm, eps=1e-6)).to(device)
 
-    loss = LabelSmoothingCrossEntropy()
+    # loss = LabelSmoothingCrossEntropy()
+    loss = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = get_adam_optimizer(model.parameters(), lr=args.lr, wd=args.weight_decay)
     lr_scheduler = build_scheduler(args, optimizer)
-    
+
     Trainer(model, train_loader, val_loader, optimizer, lr_scheduler, loss, device, args).train()
 
 if __name__ == "__main__":

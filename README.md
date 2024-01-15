@@ -71,11 +71,12 @@ and run the main training script
 ```shell
 python train.py 
 ```
+Make sure to adjust the checkpoint directory in `train.py` to store checkpoint files.
 
 <hr>
 
 ## Results
-We test our approach on the `CIFAR-10` dataset with the intention to extend our model to 4 other small low resolution datasets: `Tiny-Imagenet`, `CIFAR100`, `CINIC10` and `SVHN`. All training took place on a single V100 GPU with total training time taking approximately 21617s.
+We test our approach on the `CIFAR-10` dataset with the intention to extend our model to 4 other small low resolution datasets: `Tiny-Imagenet`, `CIFAR100`, `CINIC10` and `SVHN`. All training took place on a single A100 GPU.
   * CIFAR10
     * ```vit_cifar10_patch2_input32``` - 96.80 @ 32
 
