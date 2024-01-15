@@ -54,4 +54,5 @@ def get_args_parser():
     parser.add_argument('--seed', default=42, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--mlp_head_in", default=192, type=int, help="input dimension going inside MLP projection head")
+    parser.add_argument('--checkpoint_dir', default=".", type=str, help='Path to save logs and checkpoints.')
     return parser

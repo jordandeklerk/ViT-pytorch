@@ -76,9 +76,6 @@ def get_args_parser():
         help="Number of epochs for the linear learning-rate warm up.")
     parser.add_argument('--min_lr', type=float, default=1e-6, help="""Target LR at the
         end of optimization. We use a cosine LR schedule with linear warmup.""")
-    parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
-        gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
-        help optimization for larger ViT architectures. 0 for disabling.""")
     parser.add_argument('--optimizer', default='adamw', type=str,
         choices=['adamw', 'sgd', 'lars'], help="""Type of optimizer. Recommend using adamw with ViTs.""")
     parser.add_argument('--drop_path_rate', type=float, default=0.1, help="stochastic depth rate")
@@ -92,7 +89,7 @@ def get_args_parser():
     parser.add_argument('--seed', default=42, type=int, help='Random seed.')
     parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--mlp_head_in", default=192, type=int, help="input dimension going inside MLP projection head")
-    parser.add_argument("--checkpoint_dir = /content/drive/MyDrive/Colab Notebooks/Vision Models for CIFAR-10/Checkpoints")
+    parser.add_argument('--checkpoint_dir', default=".", type=str, help='Path to save logs and checkpoints.')
     return parser
 
 
@@ -194,7 +191,6 @@ class Trainer:
 
 def main():
     args, unknown = get_args_parser().parse_known_args()
-    args.checkpoint_dir = "your_dir"
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
