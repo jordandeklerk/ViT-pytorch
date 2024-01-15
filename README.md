@@ -21,7 +21,7 @@ This project shows that with modifications, supervised training of vision transf
 
 <img src="./Images/vit.gif" width="750"></img>
 
-The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762). We introduce a slightly modified version of self-attention using convolutional projections for keys, values, and queries as opposed to the standard linear projection. This allows us to capture more of the spatial attention of the images. Our self-attention module is given by the following:
+The vanilla vision transformer model uses the standard multi-head self-attention mechanism introduced in the seminal paper by [Vaswani et al.](https://arxiv.org/abs/1706.03762).
 
 ```python
 class Attention(nn.Module):
@@ -31,9 +31,9 @@ class Attention(nn.Module):
         head_dim = dim // num_heads
         self.scale = qk_scale or head_dim ** -0.5
         all_head_dim = head_dim * self.num_heads
-        self.qkv = nn.Conv2d(dim, dim * 3, bias=qkv_bias)
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Conv2d(all_head_dim, dim)
+        self.proj = nn.Linear(all_head_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
