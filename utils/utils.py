@@ -96,8 +96,8 @@ class GaussianBlur(object):
                 radius=random.uniform(self.radius_min, self.radius_max)
             )
         )
-
-
+    
+    
 class Solarization(object):
     """
     Apply Solarization to the PIL image.

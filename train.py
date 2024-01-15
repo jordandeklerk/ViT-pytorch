@@ -1,17 +1,28 @@
 import numpy as np
-from collections import defaultdict
 import matplotlib.pyplot as plt
+import math
 import seaborn as sns
 import argparse
 import tqdm
 import random
+import os
+import logging
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torchvision
+from torch.optim.lr_scheduler import _LRScheduler
 from torchvision import datasets, transforms
+from torch.optim import AdamW, Adam
+from torch.cuda.amp import autocast, GradScaler
+
+from typing import Tuple
+from collections import defaultdict
+
+from einops import rearrange, repeat
+from einops.layers.torch import Rearrange
 
 from functools import partial
 
@@ -25,7 +36,7 @@ from utils.utils import save_checkpoint, load_checkpoint
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('ViT for CIFAR-10', add_help=False)
+    parser = argparse.ArgumentParser('SWIN ViT for CIFAR-10', add_help=False)
     parser.add_argument('--dir', type=str, default='./data',
                     help='Data directory')
     parser.add_argument('--num_classes', type=int, default=10, choices=[10, 100, 1000],
@@ -75,110 +86,130 @@ def get_args_parser():
                     help='Label smoothing for optimizer')
     parser.add_argument('--gamma', type=float, default=1.0,
                     help='Gamma value for Cosine LR schedule')
-    parser.add_argument('--channels', type=int, default=256,
-                    help='Embedding dimension')
-    parser.add_argument('--head_channels', type=int, default=32,
-                    help='Head embedding dimension')
-    parser.add_argument('--num_blocks', type=int, default=8,
-                    help='Number of transformer blocks')
 
     # Misc
     parser.add_argument('--dataset', default='CIFAR10', type=str, choices=['CIFAR10', 'CIFAR100'], help='Please specify path to the training data.')
     parser.add_argument('--seed', default=42, type=int, help='Random seed.')
-    parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
+    parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument("--mlp_head_in", default=192, type=int, help="input dimension going inside MLP projection head")
-
+    parser.add_argument("--checkpoint_dir = /content/drive/MyDrive/Colab Notebooks/Vision Models for CIFAR-10/Checkpoints")
     return parser
 
 
 
 class Trainer:
-    def __init__(self, model, train_loader, val_loader, optimizer, lr_scheduler, loss, device, args):
+    def __init__(self, model, train_loader, val_loader, optimizer, lr_scheduler, loss_fn, device, args):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.optimizer = optimizer
         self.lr_scheduler = lr_scheduler
-        self.loss = loss
+        self.loss_fn = loss_fn
         self.device = device
         self.args = args
+        self.scaler = GradScaler()
 
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
     def train(self):
         train_losses, val_losses, train_accuracies, val_accuracies = [], [], [], []
-
         best_accuracy = 0.0
+        
+        print("\n--- GPU Information ---\n")
+        
+        if torch.cuda.is_available():
+            print(f"Model is using device: {self.device}")
+            print(f"CUDA Device: {torch.cuda.get_device_name(self.device)}")
+            print(f"Total Memory: {torch.cuda.get_device_properties(self.device).total_memory / 1024 ** 2} MB")
+        else:
+            print("Model is using CPU")
 
         for epoch in range(self.args.epochs):
+            epoch_progress_bar = tqdm(total=len(self.train_loader) + len(self.val_loader), desc=f"Epoch {epoch + 1}/{self.args.epochs}")
+            
+            print()
+            print("\n--- Training Progress ---\n")
+
+            # Training Phase
             self.model.train()
-            total_loss, total_correct = 0.0, 0
-
-            train_progress_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{self.args.epochs} [Training]", total=len(train_loader))
-            for images, labels in train_progress_bar:
+            total_train_loss, total_train_correct = 0.0, 0
+            for images, labels in self.train_loader:
                 images, labels = images.to(self.device), labels.to(self.device)
-
                 self.optimizer.zero_grad()
-                outputs = self.model(images)
-                loss = self.loss_fn(outputs, labels)
-                loss.backward()
+
+                with autocast():
+                    outputs = self.model(images)
+                    loss = self.loss_fn(outputs, labels)
+
+                self.scaler.scale(loss).backward()
 
                 if self.args.clip_grad > 0:
-                    self.clip_gradients()
+                    self.scaler.unscale_(self.optimizer)
+                    clip_gradients(self.model, self.args.clip_grad)
 
-                self.optimizer.step()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
-                total_loss += loss.item()
+                total_train_loss += loss.item()
                 _, predicted = torch.max(outputs.data, 1)
-                total_correct += (predicted == labels).sum().item()
-                train_progress_bar.set_postfix({"Train Loss": total_loss / (train_progress_bar.n + 1)})
+                total_train_correct += (predicted == labels).sum().item()
 
-            avg_train_loss = total_loss / len(train_loader)
-            train_accuracy = total_correct / len(train_loader.dataset)
-            train_losses.append(avg_train_loss)
-            train_accuracies.append(train_accuracy)
+                epoch_progress_bar.update(1)
 
+            avg_train_loss = total_train_loss / len(self.train_loader)
+            train_accuracy = total_train_correct / len(self.train_loader.dataset)
+
+            # Validation Phase
             self.model.eval()
-            total_loss, total_correct = 0.0, 0
-            val_progress_bar = tqdm(val_loader, desc=f"Epoch {epoch + 1}/{self.args.epochs} [Validation]", total=len(val_loader))
+            total_val_loss, total_val_correct = 0.0, 0
             with torch.no_grad():
-                for images, labels in val_progress_bar:
+                for images, labels in self.val_loader:
                     images, labels = images.to(self.device), labels.to(self.device)
                     outputs = self.model(images)
                     loss = self.loss_fn(outputs, labels)
-                    total_loss += loss.item()
+                    total_val_loss += loss.item()
                     _, predicted = torch.max(outputs.data, 1)
-                    total_correct += (predicted == labels).sum().item()
-                    val_progress_bar.set_postfix({"Val Loss": total_loss / (val_progress_bar.n + 1)})
+                    total_val_correct += (predicted == labels).sum().item()
 
-            avg_val_loss = total_loss / len(val_loader)
-            val_accuracy = total_correct / len(val_loader.dataset)
-            val_losses.append(avg_val_loss)
-            val_accuracies.append(val_accuracy)
+                    epoch_progress_bar.update(1)
 
+            avg_val_loss = total_val_loss / len(self.val_loader)
+            val_accuracy = total_val_correct / len(self.val_loader.dataset)
+
+            epoch_progress_bar.set_postfix({"Train Loss": avg_train_loss, "Train Acc": train_accuracy, "Val Loss": avg_val_loss, "Val Acc": val_accuracy})
+            epoch_progress_bar.close()
+
+            # Logging and Checkpointing
             self.logger.info(f"Epoch {epoch + 1}/{self.args.epochs}: Train Loss: {avg_train_loss:.4f}, Train Acc: {train_accuracy:.4f}, Val Loss: {avg_val_loss:.4f}, Val Acc: {val_accuracy:.4f}")
-
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
-                torch.save(self.model.state_dict(), "best_model.pth")
+                save_checkpoint(self.model, self.optimizer, self.lr_scheduler, epoch, self.args.checkpoint_dir, best=True)
                 self.logger.info(f"New best accuracy: {best_accuracy:.4f}, Model saved as 'best_model.pth'")
 
             self.lr_scheduler.step()
-
-            # Save checkpoint at the end of each epoch
-            self.save_checkpoint(epoch)
 
         return train_losses, val_losses, train_accuracies, val_accuracies
 
 
 def main():
     args, unknown = get_args_parser().parse_known_args()
+    args.checkpoint_dir = "your_dir"
+
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed(args.seed)
+    np.random.seed(args.seed) 
+    random.seed(args.seed) 
+    torch.manual_seed(args.seed)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     data_info = datainfo(args)
     normalize = [transforms.Normalize(mean=data_info['stat'][0], std=data_info['stat'][1])]
+
+    print("\n--- Downloading Data ---\n")
 
     train_dataset, val_dataset = dataload(args, normalize, data_info)   
 
@@ -186,6 +217,8 @@ def main():
                                                 num_workers=args.num_workers, pin_memory=True)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, 
                                                 num_workers=args.num_workers, pin_memory=True)
+    
+    print("\n--- Training and Validation Data Ready ---\n")
 
     model = ViT(img_size=[args.image_size],
             patch_size=args.patch_size,
